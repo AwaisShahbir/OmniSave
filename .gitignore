@@ -5,3 +5,7 @@ backend/temp_downloads/
 *.pyc
 .env
 .DS_Store
+*.mp4
+*.mp3
+*.webm
+*.mkv
