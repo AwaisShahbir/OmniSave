@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
-import { Download, Loader2, Clock, User } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Download, Loader2, Clock, User, Pencil, Check, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import axios from 'axios';
+
+const API = 'http://localhost:5000';
 
 const formatDuration = (seconds) => {
   const h = Math.floor(seconds / 3600);
@@ -13,59 +15,131 @@ const formatDuration = (seconds) => {
 
 const PreviewCard = ({ video }) => {
   const [selectedQuality, setSelectedQuality] = useState(video.options?.[0]?.id || '720p');
-  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadState, setDownloadState] = useState('idle'); // idle | downloading | processing | done | error
+  const [progress, setProgress] = useState(0);
+  const [speed, setSpeed]       = useState('');
+  const [eta, setEta]           = useState('');
+
+  // ── Filename editing ──────────────────────────────────────────────────────
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [customFilename, setCustomFilename] = useState(
+    video.title.replace(/[^\w\s.-]/g, '').trim()
+  );
+  const [editDraft, setEditDraft] = useState(customFilename);
+  const nameInputRef = useRef(null);
+
+  useEffect(() => {
+    if (isEditingName && nameInputRef.current) {
+      nameInputRef.current.focus();
+      nameInputRef.current.select();
+    }
+  }, [isEditingName]);
+
+  const confirmRename = () => {
+    const trimmed = editDraft.trim();
+    if (trimmed) setCustomFilename(trimmed);
+    else setEditDraft(customFilename); // revert if empty
+    setIsEditingName(false);
+  };
+
+  const cancelRename = () => {
+    setEditDraft(customFilename);
+    setIsEditingName(false);
+  };
+
+  // ── Download flow ─────────────────────────────────────────────────────────
+  const pollRef = useRef(null);
+
+  const stopPolling = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  };
 
   const handleDownload = async () => {
-    try {
-      setIsDownloading(true);
-      toast.loading('Starting download...', { id: 'download' });
+    if (downloadState === 'downloading' || downloadState === 'processing') return;
 
-      const response = await axios.post('http://localhost:5000/api/download', {
-        url: video.originalUrl,
-        quality: selectedQuality
-      }, {
-        responseType: 'blob', // Important for receiving binary data
+    setDownloadState('downloading');
+    setProgress(0);
+    setSpeed('');
+    setEta('');
+
+    try {
+      // 1. Kick off the download and get a job_id
+      const { data } = await axios.post(`${API}/api/download`, {
+        url:      video.originalUrl,
+        quality:  selectedQuality,
+        filename: customFilename,
       });
 
-      // Create a blob link to download
-      const blob = new Blob([response.data]);
-      const downloadUrl = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = downloadUrl;
+      const { job_id } = data;
 
-      // Try to extract filename from content-disposition header if available
-      let filename = 'download';
-      const disposition = response.headers['content-disposition'];
-      if (disposition && disposition.indexOf('attachment') !== -1) {
-        const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
-        const matches = filenameRegex.exec(disposition);
-        if (matches != null && matches[1]) { 
-          filename = matches[1].replace(/['"]/g, '');
+      // 2. Poll progress every 600 ms
+      pollRef.current = setInterval(async () => {
+        try {
+          const { data: prog } = await axios.get(`${API}/api/progress/${job_id}`);
+
+          setProgress(prog.percent ?? 0);
+          setSpeed(prog.speed  ?? '');
+          setEta(prog.eta    ?? '');
+
+          if (prog.status === 'processing') {
+            setDownloadState('processing');
+          }
+
+          if (prog.status === 'done') {
+            stopPolling();
+            setProgress(100);
+            setDownloadState('done');
+
+            // 3. Trigger the actual file download
+            const link = document.createElement('a');
+            link.href = `${API}/api/get-file/${job_id}`;
+            link.setAttribute('download', '');
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            toast.success('Download complete! 🎉');
+            setTimeout(() => setDownloadState('idle'), 3000);
+          }
+
+          if (prog.status === 'error') {
+            stopPolling();
+            setDownloadState('error');
+            toast.error(prog.error || 'Download failed. Please try again.');
+            setTimeout(() => setDownloadState('idle'), 3000);
+          }
+        } catch {
+          stopPolling();
+          setDownloadState('error');
+          toast.error('Lost connection to server.');
+          setTimeout(() => setDownloadState('idle'), 3000);
         }
-      } else {
-         // Fallback filename
-         const safeTitle = video.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-         const ext = selectedQuality === 'mp3' ? '.mp3' : '.mp4';
-         filename = `${safeTitle}${ext}`;
-      }
+      }, 600);
 
-      link.setAttribute('download', filename);
-      document.body.appendChild(link);
-      link.click();
-      link.parentNode.removeChild(link);
-      window.URL.revokeObjectURL(downloadUrl);
-
-      toast.success('Download completed!', { id: 'download' });
-    } catch (error) {
-      console.error(error);
-      toast.error('Failed to download. Please try again.', { id: 'download' });
-    } finally {
-      setIsDownloading(false);
+    } catch (err) {
+      setDownloadState('error');
+      toast.error(err.response?.data?.error || 'Failed to start download.');
+      setTimeout(() => setDownloadState('idle'), 3000);
     }
+  };
+
+  const isActive = downloadState === 'downloading' || downloadState === 'processing';
+
+  // ── Label helpers ─────────────────────────────────────────────────────────
+  const statusLabel = () => {
+    if (downloadState === 'downloading') return `Downloading… ${progress.toFixed(0)}%`;
+    if (downloadState === 'processing')  return 'Merging audio & video…';
+    if (downloadState === 'done')        return 'Done! ✓';
+    if (downloadState === 'error')       return 'Error — try again';
+    return 'Download Now';
   };
 
   return (
     <div className="preview-card glass-panel">
+      {/* Thumbnail */}
       <div className="preview-image-container">
         <img src={video.thumbnail} alt={video.title} className="preview-image" />
         <div className="preview-duration">
@@ -73,44 +147,86 @@ const PreviewCard = ({ video }) => {
           {formatDuration(video.duration)}
         </div>
       </div>
-      
+
       <div className="preview-content">
-        <div>
-          <h3 className="preview-title" title={video.title}>{video.title}</h3>
-          <div className="preview-channel">
-            <User size={16} />
-            <span>{video.channel}</span>
-          </div>
+        {/* Title */}
+        <h3 className="preview-title" title={video.title}>{video.title}</h3>
+        <div className="preview-channel">
+          <User size={16} />
+          <span>{video.channel}</span>
         </div>
 
+        {/* ── Filename editor ─────────────────────────────────────────── */}
+        <div className="filename-editor">
+          <span className="filename-label">Save as</span>
+          {isEditingName ? (
+            <div className="filename-input-row">
+              <input
+                ref={nameInputRef}
+                className="filename-input"
+                value={editDraft}
+                onChange={(e) => setEditDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') confirmRename();
+                  if (e.key === 'Escape') cancelRename();
+                }}
+                maxLength={120}
+              />
+              <button className="icon-btn confirm" onClick={confirmRename} title="Confirm"><Check size={15} /></button>
+              <button className="icon-btn cancel"  onClick={cancelRename}  title="Cancel"><X    size={15} /></button>
+            </div>
+          ) : (
+            <div className="filename-display" onClick={() => { setEditDraft(customFilename); setIsEditingName(true); }}>
+              <span className="filename-text">{customFilename}</span>
+              <Pencil size={13} className="pencil-icon" />
+            </div>
+          )}
+        </div>
+
+        {/* ── Progress bar ────────────────────────────────────────────── */}
+        {isActive || downloadState === 'done' ? (
+          <div className="progress-wrapper">
+            <div className="progress-track">
+              <div
+                className={`progress-fill ${downloadState === 'done' ? 'done' : ''}`}
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <div className="progress-meta">
+              <span className="progress-pct">{progress.toFixed(0)}%</span>
+              {speed && <span className="progress-speed">{speed}</span>}
+              {eta   && <span className="progress-eta">ETA {eta}</span>}
+            </div>
+          </div>
+        ) : null}
+
+        {/* ── Controls ────────────────────────────────────────────────── */}
         <div className="controls-group">
-          <select 
+          <select
             className="quality-select"
             value={selectedQuality}
             onChange={(e) => setSelectedQuality(e.target.value)}
-            disabled={isDownloading}
+            disabled={isActive}
           >
             {video.options.map(opt => (
-              <option key={opt.id} value={opt.id}>
-                {opt.label}
-              </option>
+              <option key={opt.id} value={opt.id}>{opt.label}</option>
             ))}
           </select>
 
-          <button 
-            className="action-btn download-btn" 
+          <button
+            className={`action-btn download-btn ${downloadState === 'done' ? 'done' : ''} ${downloadState === 'error' ? 'error' : ''}`}
             onClick={handleDownload}
-            disabled={isDownloading}
+            disabled={isActive}
           >
-            {isDownloading ? (
+            {isActive ? (
               <>
                 <Loader2 className="spinner" size={20} />
-                <span>Processing...</span>
+                <span>{statusLabel()}</span>
               </>
             ) : (
               <>
                 <Download size={20} />
-                <span>Download Now</span>
+                <span>{statusLabel()}</span>
               </>
             )}
           </button>
