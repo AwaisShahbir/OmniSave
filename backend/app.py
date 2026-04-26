@@ -21,6 +21,7 @@ def get_info():
         'quiet': True,
         'no_warnings': True,
         'skip_download': True,
+        'ffmpeg_location': r'C:\Users\hp\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin'
     }
 
     try:
@@ -88,6 +89,7 @@ def download():
         'outtmpl': outtmpl,
         'quiet': True,
         'no_warnings': True,
+        'ffmpeg_location': r'C:\Users\hp\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin'
     }
     
     if quality == 'mp3':
@@ -100,15 +102,19 @@ def download():
     elif quality == '1080p':
         ydl_opts['format'] = 'bestvideo[height<=1080]+bestaudio/best'
         ydl_opts['merge_output_format'] = 'mp4'
+        ydl_opts['postprocessor_args'] = {'merger+ffmpeg': ['-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k']}
     elif quality == '720p':
         ydl_opts['format'] = 'bestvideo[height<=720]+bestaudio/best'
         ydl_opts['merge_output_format'] = 'mp4'
+        ydl_opts['postprocessor_args'] = {'merger+ffmpeg': ['-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k']}
     elif quality == '480p':
         ydl_opts['format'] = 'bestvideo[height<=480]+bestaudio/best'
         ydl_opts['merge_output_format'] = 'mp4'
+        ydl_opts['postprocessor_args'] = {'merger+ffmpeg': ['-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k']}
     elif quality == '360p':
         ydl_opts['format'] = 'bestvideo[height<=360]+bestaudio/best'
         ydl_opts['merge_output_format'] = 'mp4'
+        ydl_opts['postprocessor_args'] = {'merger+ffmpeg': ['-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k']}
     else:
         ydl_opts['format'] = 'best'
         
@@ -116,15 +122,14 @@ def download():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             
-            # The exact filename might change if it's merged or processed (like mp3)
-            # So let's look for the file that starts with our filename_id in DOWNLOAD_DIR
+            # Get the exact filepath yt-dlp saved the final file to
             downloaded_file = None
-            for f in os.listdir(DOWNLOAD_DIR):
-                if f.startswith(filename_id):
-                    downloaded_file = os.path.join(DOWNLOAD_DIR, f)
-                    break
-                    
-            if not downloaded_file:
+            if 'requested_downloads' in info and len(info['requested_downloads']) > 0:
+                downloaded_file = info['requested_downloads'][0].get('filepath')
+            elif 'filepath' in info:
+                downloaded_file = info.get('filepath')
+                
+            if not downloaded_file or not os.path.exists(downloaded_file):
                 return jsonify({'error': 'Download failed to produce a file'}), 500
 
             # Set up the file to be deleted after sending
