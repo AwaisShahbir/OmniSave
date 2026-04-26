@@ -1,8 +1,28 @@
 import os
 import uuid
+import shutil
 from flask import Flask, request, jsonify, send_file, after_this_request
 from flask_cors import CORS
 import yt_dlp
+
+# Dynamically find ffmpeg — works on Linux servers, Windows, and Mac
+# Priority: 1) FFMPEG_PATH env var  2) system PATH  3) local WinGet fallback
+def get_ffmpeg_location():
+    # 1. Check for environment variable override (useful for servers)
+    env_path = os.environ.get('FFMPEG_PATH')
+    if env_path and os.path.exists(env_path):
+        return env_path
+    # 2. Check if ffmpeg is in system PATH (Linux/Mac servers, or Windows with PATH set)
+    system_ffmpeg = shutil.which('ffmpeg')
+    if system_ffmpeg:
+        return os.path.dirname(system_ffmpeg)
+    # 3. Local Windows WinGet fallback (dev machine only)
+    local_path = r'C:\Users\hp\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin'
+    if os.path.exists(local_path):
+        return local_path
+    return None  # yt-dlp will try to find it on its own
+
+FFMPEG_LOCATION = get_ffmpeg_location()
 
 app = Flask(__name__)
 CORS(app)
@@ -21,8 +41,9 @@ def get_info():
         'quiet': True,
         'no_warnings': True,
         'skip_download': True,
-        'ffmpeg_location': r'C:\Users\hp\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin'
     }
+    if FFMPEG_LOCATION:
+        ydl_opts['ffmpeg_location'] = FFMPEG_LOCATION
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -89,8 +110,9 @@ def download():
         'outtmpl': outtmpl,
         'quiet': True,
         'no_warnings': True,
-        'ffmpeg_location': r'C:\Users\hp\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin'
     }
+    if FFMPEG_LOCATION:
+        ydl_opts['ffmpeg_location'] = FFMPEG_LOCATION
     
     if quality == 'mp3':
         ydl_opts['format'] = 'bestaudio/best'
