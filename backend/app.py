@@ -371,9 +371,10 @@ def instagram_get_info():
         err_msg = str(first_err)
 
         # ── Photo-only post fallback ─────────────────────────────────────────
-        # yt-dlp raises "There is no video in this post" for photo-only posts.
+        # yt-dlp often fails on photo-only posts or due to transient API blocks.
         # We retry with extract_flat=True to at least get metadata + thumbnail.
-        if 'no video' in err_msg.lower() or 'photo' in err_msg.lower():
+        low_err = err_msg.lower()
+        if any(x in low_err for x in ['no video', 'photo', 'empty media', 'not granting access']):
             try:
                 flat_opts = {
                     **instagram_ydl_opts(),
