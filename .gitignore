@@ -9,3 +9,8 @@ backend/temp_downloads/
 *.mp3
 *.webm
 *.mkv
+instagram_cookies.txt
+backend/test_*.py
+backend/extract_*.py
+backend/*.html
+backend/*.jpg
